@@ -73,11 +73,13 @@ export class IDSTransformer {
 
   private applyRegexRule(rule: RegexRuleConfig, ids: string): string {
     try {
-      const regex = new RegExp(rule.pattern, 'g')
-      // 若模式中含有转义花括号 \{ 或 \}，说明用户要跨命名字根边界匹配，直接对整串应用
-      if (rule.pattern.includes('\\{') || rule.pattern.includes('\\}')) {
+      // 若 pattern 中含有命名字根引用 {xxx}，自动转义花括号后对整串应用（跨命名字根边界匹配）
+      if (/\{[^}]+\}/.test(rule.pattern)) {
+        const escapedPattern = rule.pattern.replace(/\{/g, '\\{').replace(/\}/g, '\\}')
+        const regex = new RegExp(escapedPattern, 'g')
         return ids.replace(regex, rule.replacement)
       }
+      const regex = new RegExp(rule.pattern, 'g')
       return this.replaceRegexOutsideBraces(ids, regex, rule.replacement)
     } catch {
       return ids
