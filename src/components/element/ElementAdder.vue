@@ -229,8 +229,19 @@ function addElement() {
   }
 
   const mainKey = codePositions.value[0]
+
+  // 主码为空：彻底删除该字根
   if (!mainKey) {
-    toast('请选择主码（第一位）')
+    if (!engine.roots.has(props.selectedElement) && !engine.rootCodes.has(props.selectedElement)) {
+      toast('请选择主码（第一位）')
+      return
+    }
+    engine.removeRoots([props.selectedElement])
+    saveCurrentConfig()
+    refreshStats()
+    toast(`已删除字根「${props.selectedElement}」`)
+    emit('added')
+    codePositions.value = ['', '', '', '']
     return
   }
 
@@ -394,7 +405,7 @@ function closePanel() {
         <div class="code-inputs">
           <KeySelect
             v-model="codePositions[0]"
-            :allow-empty="false"
+            :allow-empty="true"
             placeholder="主码"
             :disabled="elementInfo?.isMerged"
           />
@@ -417,14 +428,15 @@ function closePanel() {
             :disabled="elementInfo?.isMerged"
           />
         </div>
-        <div v-if="!elementInfo?.isMerged" class="form-hint">提示：选择「字根码位」可创建半归并关系</div>
+        <div v-if="!elementInfo?.isMerged" class="form-hint">提示：选择「字根码位」可创建半归并关系；主码留空并点击按钮可彻底删除该字根</div>
         <button
           v-if="!elementInfo?.isMerged"
-          class="btn btn-primary btn-sm"
-          :disabled="!codePositions[0]"
+          class="btn btn-sm"
+          :class="(!codePositions[0] && elementInfo?.isAdded) ? 'btn-danger' : 'btn-primary'"
+          :disabled="!codePositions[0] && !elementInfo?.isAdded"
           @click="addElement"
         >
-          添加
+          {{ (!codePositions[0] && elementInfo?.isAdded) ? '删除字根' : '添加' }}
         </button>
       </div>
 

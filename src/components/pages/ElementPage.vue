@@ -162,11 +162,39 @@ function selectKey(key: string) {
 
 // 删除字根
 function deleteRoot(root: string) {
-  engine.rootCodes.delete(root)
-  engine.roots.delete(root)
+  engine.removeRoots([root])
   saveCurrentConfig()
   refreshStats()
   toast(`已删除字根: ${root}`)
+}
+
+// 一键删除当前键位上的所有字根（含归并字根）
+function deleteAllRootsOnKey() {
+  if (!selectedKey.value) return
+  const keyName = selectedKey.value === '_' ? '空格' : selectedKey.value.toUpperCase()
+  const targets: string[] = []
+
+  for (const item of selectedRoots.value) {
+    targets.push(item.root)
+    for (const merged of item.mergedRoots) targets.push(merged)
+  }
+  for (const item of mergedRootsOnKey.value) {
+    targets.push(item.target)
+  }
+
+  if (targets.length === 0) {
+    toast(`键位「${keyName}」上没有字根`)
+    return
+  }
+
+  if (!confirm(`确认删除键位「${keyName}」上的所有 ${targets.length} 个字根？此操作不可撤销。`)) {
+    return
+  }
+
+  engine.removeRoots(targets)
+  saveCurrentConfig()
+  refreshStats()
+  toast(`已删除键位「${keyName}」上的 ${targets.length} 个字根`)
 }
 
 // 取消归并
@@ -382,7 +410,17 @@ function confirmAddAtomicRoots() {
               键位 <strong>{{ selectedKey === '_' ? '空格' : selectedKey.toUpperCase() }}</strong>
               <span class="root-count">{{ selectedRoots.length }} 个字根</span>
             </h3>
-            <button class="btn-close-detail" @click="selectedKey = null" title="关闭">×</button>
+            <div class="detail-header-actions">
+              <button
+                class="btn btn-danger btn-sm"
+                :disabled="selectedRoots.length === 0 && mergedRootsOnKey.length === 0"
+                @click="deleteAllRootsOnKey"
+                title="一键删除该键位上的所有字根"
+              >
+                一键删除所有字根
+              </button>
+              <button class="btn-close-detail" @click="selectedKey = null" title="关闭">×</button>
+            </div>
           </div>
 
           <!-- 归并字根列表 -->
@@ -739,6 +777,26 @@ function confirmAddAtomicRoots() {
 .btn-close-detail:hover {
   background: var(--bg3);
   color: var(--text);
+}
+
+.detail-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* 归并区块 */

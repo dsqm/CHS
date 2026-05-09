@@ -1288,7 +1288,18 @@ export class CharsHijack {
       ids = this.transformer.transform(ids)
     }
 
-    const tree = this._buildWithIds(char, ids, new Set())
+    let tree = this._buildWithIds(char, ids, new Set())
+
+    // 对完全展开后的 IDS 再应用一次转换，支持跨层匹配的规则
+    if (this.transformer) {
+      const fullIds = tree.toIDS()
+      const transformedFullIds = this.transformer.transform(fullIds)
+      if (transformedFullIds !== fullIds) {
+        const newTree = parseIDS(transformedFullIds)
+        if (newTree) tree = newTree
+      }
+    }
+
     const res: DecompResult = { leaves: tree.leaves(), ids: tree.toIDS(), tree }
     this._cache.set(char, res)
     return res
