@@ -51,6 +51,13 @@ function getElementInfo(element: string) {
   }
 }
 
+// 判断是否为归并/半归并/等效字根（橙色高亮）
+function isSpecialRoot(element: string): boolean {
+  return engine.isMergedRoot(element)
+    || engine.isEquivalentRoot(element)
+    || engine.getCodeEquivalencesForRoot(element).size > 0
+}
+
 // 显示元素（PUA转换）
 function displayElement(element: string): string {
   return bracedRootToPua(element)
@@ -109,7 +116,8 @@ function jumpToPage() {
         class="element-item"
         :class="{
           selected: element === selectedElement,
-          added: engine.roots.has(element)
+          added: engine.roots.has(element) && !isSpecialRoot(element),
+          'added-special': isSpecialRoot(element)
         }"
         @click="onClick(element)"
         @dblclick="onDoubleClick(element)"
@@ -219,7 +227,15 @@ function jumpToPage() {
   background: rgba(0, 180, 42, 0.08);
 }
 
+.element-item.added-special {
+  background: rgba(255, 125, 0, 0.08);
+}
+
 .element-item.added.selected {
+  background: var(--primary-bg);
+}
+
+.element-item.added-special.selected {
   background: var(--primary-bg);
 }
 
@@ -234,6 +250,10 @@ function jumpToPage() {
   color: var(--success);
   font-family: monospace;
   margin-top: 2px;
+}
+
+.element-item.added-special .element-code {
+  color: var(--warning);
 }
 
 .pagination {

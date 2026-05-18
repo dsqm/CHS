@@ -42,7 +42,7 @@ export const GB_STROKE_EQUIVALENT_ROOTS: Record<string, string[]> = {
   "一": ["㇀"],
   "丨": ["亅"],
   "丶": ["㇏", "乀"],
-  "乛": ["㇇", "㇂", "𠃊", "㇅", "𠃌", "乚", "𠃍", "㇉", "⺄", "𠄎", "𠃋", "𠄌", "㇎", "𠃑", "㇌", "㇋", "㇁", "𡿨", "乙", "〇", "α", "ℓ"]
+  "乛": ["㇇", "㇂", "𠃊", "㇅", "𠃌", "乚", "𠃍", "㇉", "⺄", "𠄎", "𠃋", "𠄌", "㇎", "𠃑", "ㄣ", "㇌", "㇋", "㇁", "㇊", "㇍", "𡿨", "乙", "〇", "α", "ℓ"]
 }
 
 function parseRootsFromText(text: string): Set<string> {
@@ -502,6 +502,13 @@ export class CharsHijack {
     // 设置归并字根
     if (config.merged_roots) {
       this.mergedRoots = new Map(Object.entries(config.merged_roots))
+      // 递归解析归并链，将所有条目指向链的终点
+      for (const [targetRoot, sourceRoot] of this.mergedRoots) {
+        const resolved = this._resolveMergeChain(sourceRoot)
+        if (resolved !== sourceRoot) {
+          this.mergedRoots.set(targetRoot, resolved)
+        }
+      }
       // 应用归并字根：将归并字根的编码设置为来源字根的编码
       for (const [targetRoot, sourceRoot] of this.mergedRoots) {
         const sourceCode = this.rootCodes.get(sourceRoot)
@@ -701,6 +708,27 @@ export class CharsHijack {
     const code = this.rootCodes.get(root)
     if (!code) return ''
     return (code.main || '') + (code.sub || '') + (code.supplement || '')
+  }
+
+  // 将字根+码位索引解析为分析用的规范形式（归并字根→来源字根，半归并码位→来源字根+码位）
+  resolveElementForAnalysis(root: string, codeIndex: number): { root: string; codeIndex: number } {
+    for (let i = 0; i < 10; i++) {
+      if (this.mergedRoots.has(root)) {
+        root = this._resolveMergeChain(root)
+        continue
+      }
+      const equivRef = this.codeEquivalences.get(`${root}.${codeIndex}`)
+      if (equivRef) {
+        const parsed = this.parseCodeRef(equivRef)
+        if (parsed) {
+          root = parsed.root
+          codeIndex = parsed.codeIndex
+          continue
+        }
+      }
+      break
+    }
+    return { root, codeIndex }
   }
 
   // 获取字根的有效编码（考虑等效字根）
@@ -916,7 +944,7 @@ export class CharsHijack {
             const root = pickRoots[actualRootIdx]
             const fullCode = this.getRootFullCode(root)
             const actualCodeIdx = adjustedCodeIdx === -1 ? (fullCode ? fullCode.length - 1 : 0) : adjustedCodeIdx - 1
-            elements.push({ root, codeIndex: actualCodeIdx })
+            elements.push(this.resolveElementForAnalysis(root, actualCodeIdx))
           } else {
             elements.push({ root: '', codeIndex: 0 })
           }
@@ -997,23 +1025,48 @@ export class CharsHijack {
 
   // ============ 归并字根方法 ============
 
+  // 递归解析归并链，返回最终来源字根
+  private _resolveMergeChain(sourceRoot: string): string {
+    const visited = new Set<string>()
+    let current = sourceRoot
+    while (this.mergedRoots.has(current)) {
+      if (visited.has(current)) break // 防止循环
+      visited.add(current)
+      current = this.mergedRoots.get(current)!
+    }
+    return current
+  }
+
   // 设置归并字根（将 targetRoot 的编码设置为与 sourceRoot 相同）
   setMergedRoot(targetRoot: string, sourceRoot: string): void {
+    // 递归解析归并链，找到最终来源
+    const resolvedSource = this._resolveMergeChain(sourceRoot)
+
     // 获取来源字根的编码
-    const sourceCode = this.rootCodes.get(sourceRoot)
+    const sourceCode = this.rootCodes.get(resolvedSource)
     if (!sourceCode) {
-      console.warn(`Source root "${sourceRoot}" has no code`)
+      console.warn(`Source root "${resolvedSource}" has no code`)
       return
     }
 
     // 清除该字根的所有半归并关系（归并和半归并互斥）
     this._clearCodeEquivalencesForRoot(targetRoot)
 
-    // 设置归并关系
-    this.mergedRoots.set(targetRoot, sourceRoot)
+    // 设置归并关系（指向链的终点）
+    this.mergedRoots.set(targetRoot, resolvedSource)
+
+    // 将所有原本指向 sourceRoot 的归并关系也更新为指向 resolvedSource
+    if (resolvedSource !== sourceRoot) {
+      for (const [t, s] of this.mergedRoots) {
+        if (s === sourceRoot && t !== targetRoot) {
+          this.mergedRoots.set(t, resolvedSource)
+          this.rootCodes.set(t, { ...sourceCode, root: t, mergedFrom: resolvedSource })
+        }
+      }
+    }
     
     // 复制编码到目标字根
-    this.rootCodes.set(targetRoot, { ...sourceCode, root: targetRoot, mergedFrom: sourceRoot })
+    this.rootCodes.set(targetRoot, { ...sourceCode, root: targetRoot, mergedFrom: resolvedSource })
     
     // 确保目标字根在 roots 集合中
     this.roots.add(targetRoot)
@@ -1058,6 +1111,18 @@ export class CharsHijack {
     return this.mergedRoots.has(root)
   }
 
+  // 检查字根是否"完全半归并"：主码（index 0）和第2码（index 1）都归并到同一字根
+  isFullyCodeEquivalent(root: string): boolean {
+    const equivs = this.getCodeEquivalencesForRoot(root)
+    const source0 = equivs.get(0)
+    const source1 = equivs.get(1)
+    if (!source0 || !source1) return false
+    const parsed0 = this.parseCodeRef(source0)
+    const parsed1 = this.parseCodeRef(source1)
+    if (!parsed0 || !parsed1) return false
+    return parsed0.root === parsed1.root
+  }
+
   // 获取所有归并到某字根的字根列表
   getMergedToRoots(sourceRoot: string): string[] {
     const result: string[] = []
@@ -1072,6 +1137,13 @@ export class CharsHijack {
   // 批量设置归并字根
   setMergedRootsMap(mergedRoots: Record<string, string>): void {
     this.mergedRoots = new Map(Object.entries(mergedRoots))
+    // 递归解析归并链
+    for (const [targetRoot, sourceRoot] of this.mergedRoots) {
+      const resolved = this._resolveMergeChain(sourceRoot)
+      if (resolved !== sourceRoot) {
+        this.mergedRoots.set(targetRoot, resolved)
+      }
+    }
     // 应用所有归并关系
     for (const [targetRoot, sourceRoot] of this.mergedRoots) {
       const sourceCode = this.rootCodes.get(sourceRoot)
@@ -1084,6 +1156,18 @@ export class CharsHijack {
   }
 
   // ============ 字根半归并方法 ============
+
+  // 递归解析半归并链，返回最终来源引用
+  private _resolveCodeEquivChain(sourceRef: string): string {
+    const visited = new Set<string>()
+    let current = sourceRef
+    while (this.codeEquivalences.has(current)) {
+      if (visited.has(current)) break // 防止循环
+      visited.add(current)
+      current = this.codeEquivalences.get(current)!
+    }
+    return current
+  }
 
   // 解析码位引用 "目.1" => { root: "目", codeIndex: 1 }
   // 支持简写格式 "目" => { root: "目", codeIndex: 0 }（默认第1码）
@@ -1119,44 +1203,49 @@ export class CharsHijack {
   setCodeEquivalence(targetRef: string, sourceRef: string): boolean {
     const target = this.parseCodeRef(targetRef)
     const source = this.parseCodeRef(sourceRef)
-    
+
     if (!target || !source) {
       console.warn('Invalid code reference format')
       return false
     }
-    
-    const sourceCode = this.rootCodes.get(source.root)
+
+    // 递归解析半归并链，找到最终来源
+    const resolvedSourceRef = this._resolveCodeEquivChain(sourceRef)
+    const resolvedSource = this.parseCodeRef(resolvedSourceRef)
+    if (!resolvedSource) return false
+
+    const sourceCode = this.rootCodes.get(resolvedSource.root)
     if (!sourceCode || !sourceCode.main) {
-      console.warn(`Source root "${source.root}" has no code`)
+      console.warn(`Source root "${resolvedSource.root}" has no code`)
       return false
     }
-    
-    const sourceCodeChar = this.getRootCodeAt(source.root, source.codeIndex)
+
+    const sourceCodeChar = this.getRootCodeAt(resolvedSource.root, resolvedSource.codeIndex)
     if (sourceCodeChar === undefined || sourceCodeChar === '') {
-      console.warn(`Source root "${source.root}" has no code at index ${source.codeIndex}`)
+      console.warn(`Source root "${resolvedSource.root}" has no code at index ${resolvedSource.codeIndex}`)
       return false
     }
-    
+
     // 清除该字根的归并关系（归并和半归并互斥）
     if (this.mergedRoots.has(target.root)) {
       this.mergedRoots.delete(target.root)
     }
-    
+
     let targetCode = this.rootCodes.get(target.root)
-    
+
     if (!targetCode || !targetCode.main) {
-      targetCode = { 
-        root: target.root, 
+      targetCode = {
+        root: target.root,
         main: sourceCode.main,
         sub: sourceCode.sub,
         supplement: sourceCode.supplement
       }
       this.rootCodes.set(target.root, targetCode)
     }
-    
+
     const targetFullCode = (targetCode.main || '') + (targetCode.sub || '') + (targetCode.supplement || '')
     const codeChars = targetFullCode.split('')
-    
+
     while (codeChars.length <= target.codeIndex) {
       codeChars.push('\x00')
     }
@@ -1169,10 +1258,19 @@ export class CharsHijack {
     this.rootCodes.set(target.root, {
       root: target.root,
       ...parsed,
-      codeEquivFrom: sourceRef
+      codeEquivFrom: resolvedSourceRef
     })
 
-    this.codeEquivalences.set(targetRef, sourceRef)
+    // 将所有原本指向 sourceRef 的半归并关系也更新为指向 resolvedSourceRef
+    if (resolvedSourceRef !== sourceRef) {
+      for (const [t, s] of this.codeEquivalences) {
+        if (s === sourceRef && t !== targetRef) {
+          this.codeEquivalences.set(t, resolvedSourceRef)
+        }
+      }
+    }
+
+    this.codeEquivalences.set(targetRef, resolvedSourceRef)
     this.roots.add(target.root)
     this._cache.clear()
 
@@ -1229,6 +1327,13 @@ export class CharsHijack {
   // 批量设置字根半归并
   setCodeEquivalencesMap(codeEquivalences: Record<string, string>): void {
     this.codeEquivalences = new Map(Object.entries(codeEquivalences))
+    // 递归解析半归并链，将所有条目指向链的终点
+    for (const [targetRef, sourceRef] of [...this.codeEquivalences]) {
+      const resolved = this._resolveCodeEquivChain(sourceRef)
+      if (resolved !== sourceRef) {
+        this.codeEquivalences.set(targetRef, resolved)
+      }
+    }
     // 应用所有字根半归并
     for (const [targetRef, sourceRef] of this.codeEquivalences) {
       this.applyCodeEquivalence(targetRef, sourceRef)

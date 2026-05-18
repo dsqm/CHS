@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { useEngine } from '../../composables/useEngine'
 import { codeToString } from '../../engine/config'
 import ElementPicker from '../element/ElementPicker.vue'
@@ -23,17 +23,45 @@ const KEYBOARD_LAYOUT = [
 // 选中的键位
 const selectedKey = ref<string | null>(null)
 
-// 选中的编辑元素（用于传递给 ElementPicker）
+// 选中的编辑元素（用于传递给 ElementPicker，始终跟随实际点击的元素）
 const editingElement = ref<string | undefined>(undefined)
+
+// 键位面板高亮的字根（归并字根时指向源字根）
+const keyPanelRoot = ref<string | undefined>(undefined)
+
+// 正在闪烁的字根（归并字根点击时触发橙色闪烁）
+const flashingRoot = ref<string | undefined>(undefined)
+
+async function flashRoot(root: string) {
+  flashingRoot.value = root
+  await scrollToRoot(root)
+  setTimeout(() => { flashingRoot.value = undefined }, 2100) // 3次 × 700ms
+}
+
+async function scrollToRoot(root: string) {
+  await nextTick()
+  document.querySelector(`[data-root="${CSS.escape(root)}"]`)
+    ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
 
 // 处理元素选择（点击已编码字根时定位键位）
 function onElementSelect(element: string) {
-  // 检查该元素是否有编码
-  const code = engine.rootCodes.get(element)
+  editingElement.value = element
+
+  // 若为归并字根，定位到源字根并触发橙色闪烁
+  const mergeSource = engine.mergedRoots.get(element)
+  const target = mergeSource ?? element
+  keyPanelRoot.value = target
+
+  const code = engine.rootCodes.get(target)
   if (code && code.main) {
-    // 定位到对应键位并展开详情
-    const key = code.main.toLowerCase()
-    selectedKey.value = key
+    selectedKey.value = code.main.toLowerCase()
+  }
+
+  if (mergeSource) {
+    flashRoot(target)
+  } else {
+    scrollToRoot(target)
   }
 }
 
@@ -43,19 +71,24 @@ const draggedRoot = ref<string | null>(null)
 // 统计信息
 const statsInfo = computed(() => {
   rootsVersion.value
+  let groupCount = 0
   let encodedCount = 0
   let totalCode = 0
-  
+
   for (const root of engine.roots) {
+    if (engine.isMergedRoot(root)) continue
+    if (engine.isFullyCodeEquivalent(root)) continue
+    groupCount++
     const code = engine.rootCodes.get(root)
     if (code && code.main) {
       encodedCount++
       totalCode += 1 + (code.sub ? 1 : 0) + (code.supplement?.length || 0)
     }
   }
-  
+
   return {
     total: engine.roots.size,
+    groupCount,
     encoded: encodedCount,
     avgCode: encodedCount > 0 ? (totalCode / encodedCount).toFixed(1) : '0'
   }
@@ -73,9 +106,10 @@ const rootsOnKey = computed(() => {
     }
   }
 
-  // 遍历所有字根（排除归并字根）
+  // 遍历所有字根（排除归并字根和完全半归并字根）
   for (const [root, code] of engine.rootCodes) {
     if (engine.isMergedRoot(root)) continue
+    if (engine.isFullyCodeEquivalent(root)) continue
     
     if (code && code.main) {
       const mainKey = code.main.toLowerCase()
@@ -158,6 +192,8 @@ function getRootFontClass(root: string): string {
 // 选择键位
 function selectKey(key: string) {
   selectedKey.value = selectedKey.value === key ? null : key
+  mergedSectionExpanded.value = false
+  equivSectionExpanded.value = false
 }
 
 // 删除字根
@@ -221,12 +257,29 @@ function onElementAdded() {
 // 选择字根进行编辑（点击字根卡片）
 function selectRootForEdit(root: string) {
   editingElement.value = root
+  keyPanelRoot.value = root
 }
 
 // 选择归并字根进行编辑
 function selectMergedRootForEdit(root: string) {
   editingElement.value = root
+  keyPanelRoot.value = engine.mergedRoots.get(root) ?? root
 }
+
+// 半归并反向索引：源字根 → 引用它的字根列表
+const codeEquivReverseMap = computed(() => {
+  rootsVersion.value
+  const result = new Map<string, { targetRoot: string; targetIndex: number }[]>()
+  for (const [targetRef, sourceRef] of engine.codeEquivalences) {
+    const targetParsed = engine.parseCodeRef(targetRef)
+    const sourceParsed = engine.parseCodeRef(sourceRef)
+    if (!targetParsed || !sourceParsed) continue
+    const sourceRoot = sourceParsed.root
+    if (!result.has(sourceRoot)) result.set(sourceRoot, [])
+    result.get(sourceRoot)!.push({ targetRoot: targetParsed.root, targetIndex: targetParsed.codeIndex })
+  }
+  return result
+})
 
 // 从半归并引用中解析字根
 function parseRootFromRef(ref: string): string {
@@ -280,6 +333,10 @@ function onDrop(targetRoot: string) {
 // 等效字根弹窗
 const showEquivModal = ref(false)
 
+// 归并/半归并区块折叠状态（默认折叠）
+const mergedSectionExpanded = ref(false)
+const equivSectionExpanded = ref(false)
+
 function openEquivModal() {
   showEquivModal.value = true
 }
@@ -318,6 +375,10 @@ function confirmAddAtomicRoots() {
         <span class="stats-item">
           <span class="stats-label">字根总数</span>
           <span class="stats-value">{{ statsInfo.total }}</span>
+        </span>
+        <span class="stats-item">
+          <span class="stats-label">字根组数</span>
+          <span class="stats-value">{{ statsInfo.groupCount }}</span>
         </span>
         <span class="stats-item">
           <span class="stats-label">已编码</span>
@@ -365,10 +426,11 @@ function confirmAddAtomicRoots() {
             >
               <span class="key-label">{{ key.toUpperCase() }}</span>
               <div v-if="rootsOnKey.get(key)?.length" class="key-roots">
-                <div 
-                  v-for="item in rootsOnKey.get(key)!.slice(0, 4)" 
+                <div
+                  v-for="item in rootsOnKey.get(key)!.slice(0, 4)"
                   :key="item.root"
                   class="root-chip"
+                  :class="{ 'root-chip-selected': item.root === keyPanelRoot, 'root-chip-flashing': item.root === flashingRoot }"
                 >
                   <span class="root-text" :class="getRootFontClass(item.root)">{{ displayRoot(item.root) }}</span>
                   <span v-if="item.subCode" class="root-sub" :title="`后续编码: ${item.subCode}`">
@@ -424,12 +486,16 @@ function confirmAddAtomicRoots() {
           </div>
 
           <!-- 归并字根列表 -->
-          <div v-if="mergedRootsOnKey.length > 0" class="merged-section">
-            <div class="section-label">归并字根 ({{ mergedRootsOnKey.length }}) - 点击编辑</div>
-            <div class="merged-list">
-              <div 
-                v-for="item in mergedRootsOnKey" 
-                :key="item.target" 
+          <div v-if="mergedRootsOnKey.length > 0" class="collapsible-section">
+            <button class="section-toggle" @click="mergedSectionExpanded = !mergedSectionExpanded">
+              <span class="toggle-icon" :class="{ expanded: mergedSectionExpanded }">›</span>
+              <span class="section-label">归并字根</span>
+              <span class="section-count">{{ mergedRootsOnKey.length }}</span>
+            </button>
+            <div v-if="mergedSectionExpanded" class="merged-list">
+              <div
+                v-for="item in mergedRootsOnKey"
+                :key="item.target"
                 class="merged-item clickable"
                 @click="selectMergedRootForEdit(item.target)"
               >
@@ -443,12 +509,16 @@ function confirmAddAtomicRoots() {
           </div>
 
           <!-- 字根半归并列表 -->
-          <div v-if="codeEquivalencesOnKey.length > 0" class="equiv-section">
-            <div class="section-label">字根半归并 ({{ codeEquivalencesOnKey.length }}) - 点击编辑</div>
-            <div class="equiv-list">
-              <div 
-                v-for="item in codeEquivalencesOnKey" 
-                :key="item.targetRef" 
+          <div v-if="codeEquivalencesOnKey.length > 0" class="collapsible-section">
+            <button class="section-toggle" @click="equivSectionExpanded = !equivSectionExpanded">
+              <span class="toggle-icon" :class="{ expanded: equivSectionExpanded }">›</span>
+              <span class="section-label">字根半归并</span>
+              <span class="section-count">{{ codeEquivalencesOnKey.length }}</span>
+            </button>
+            <div v-if="equivSectionExpanded" class="equiv-list">
+              <div
+                v-for="item in codeEquivalencesOnKey"
+                :key="item.targetRef"
                 class="equiv-item clickable"
                 @click="selectMergedRootForEdit(parseRootFromRef(item.targetRef))"
               >
@@ -467,7 +537,8 @@ function confirmAddAtomicRoots() {
               v-for="item in selectedRoots" 
               :key="item.root" 
               class="root-card"
-              :class="{ 'dragging': draggedRoot === item.root }"
+              :data-root="item.root"
+              :class="{ 'dragging': draggedRoot === item.root, 'root-card-selected': item.root === keyPanelRoot, 'root-card-flashing': item.root === flashingRoot }"
               draggable="true"
               @click="selectRootForEdit(item.root)"
               @dragstart="onDragStart($event, item.root)"
@@ -482,9 +553,27 @@ function confirmAddAtomicRoots() {
                 <span v-if="item.code?.supplement" class="supplement">{{ item.code.supplement }}</span>
               </span>
               <!-- 归并字根显示 -->
-              <span v-if="item.mergedRoots.length > 0" class="merged-badge" :title="`归并字根: ${item.mergedRoots.join(', ')}`">
-                (<span v-for="r in item.mergedRoots" :key="r" :class="getRootFontClass(r)">{{ displayRoot(r) }}</span>)
-              </span>
+              <div v-if="item.mergedRoots.length > 0" class="merged-badge" :title="`归并字根: ${item.mergedRoots.join(', ')}`">
+                <span
+                  v-for="r in item.mergedRoots"
+                  :key="r"
+                  class="merged-root-char"
+                  :class="getRootFontClass(r)"
+                >{{ displayRoot(r) }}</span>
+              </div>
+              <!-- 半归并字根显示 -->
+              <div
+                v-if="codeEquivReverseMap.get(item.root)?.length"
+                class="half-merged-badge"
+                :title="codeEquivReverseMap.get(item.root)!.map(e => `${e.targetRoot} 的第${e.targetIndex + 1}码`).join('、')"
+              >
+                <span
+                  v-for="equiv in codeEquivReverseMap.get(item.root)"
+                  :key="`${equiv.targetRoot}.${equiv.targetIndex}`"
+                  class="half-merged-chip"
+                  :class="getRootFontClass(equiv.targetRoot)"
+                >{{ displayRoot(equiv.targetRoot) }}<sub>{{ equiv.targetIndex + 1 }}</sub></span>
+              </div>
               <button class="btn-delete" @click.stop="deleteRoot(item.root)" title="删除">×</button>
             </div>
           </div>
@@ -696,6 +785,29 @@ function confirmAddAtomicRoots() {
   background: rgba(255,255,255,0.2);
 }
 
+.root-chip-selected {
+  background: var(--primary) !important;
+}
+
+.root-chip-selected .root-text,
+.root-chip-selected .root-sub {
+  color: white !important;
+}
+
+@keyframes chip-flash-orange {
+  0%, 100% { background: var(--primary); }
+  50% { background: var(--warning); }
+}
+
+.root-chip-flashing {
+  animation: chip-flash-orange 0.7s ease-in-out 3;
+}
+
+.root-chip-flashing .root-text,
+.root-chip-flashing .root-sub {
+  color: white !important;
+}
+
 .more {
   font-size: 10px;
   color: var(--text3);
@@ -799,18 +911,58 @@ function confirmAddAtomicRoots() {
   cursor: not-allowed;
 }
 
-/* 归并区块 */
-.merged-section,
-.equiv-section {
-  margin-bottom: 12px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
+/* 归并/半归并折叠区块 */
+.collapsible-section {
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.section-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg3);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text2);
+  font-size: 12px;
+  transition: background 0.15s;
+}
+
+.section-toggle:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.toggle-icon {
+  font-size: 14px;
+  line-height: 1;
+  transition: transform 0.2s ease;
+  display: inline-block;
+  color: var(--text3);
+}
+
+.toggle-icon.expanded {
+  transform: rotate(90deg);
 }
 
 .section-label {
-  font-size: 12px;
+  flex: 1;
+  font-weight: 500;
+}
+
+.section-count {
+  font-size: 11px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 8px;
   color: var(--text2);
-  margin-bottom: 8px;
 }
 
 .merged-list,
@@ -818,6 +970,8 @@ function confirmAddAtomicRoots() {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  padding: 10px;
+  background: var(--bg2);
 }
 
 .merged-item,
@@ -912,6 +1066,21 @@ function confirmAddAtomicRoots() {
   border-style: dashed;
 }
 
+.root-card-selected {
+  border-color: var(--primary);
+  background: var(--primary-bg);
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+@keyframes card-flash-orange {
+  0%, 100% { border-color: var(--primary); background: var(--primary-bg); box-shadow: 0 0 0 2px var(--primary); }
+  50% { border-color: var(--warning); background: rgba(255, 125, 0, 0.12); box-shadow: 0 0 0 2px var(--warning); }
+}
+
+.root-card-flashing {
+  animation: card-flash-orange 0.7s ease-in-out 3;
+}
+
 .root-char {
   font-size: 24px;
   line-height: 1;
@@ -937,13 +1106,45 @@ function confirmAddAtomicRoots() {
 }
 
 .merged-badge {
-  font-size: 11px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.merged-root-char {
+  font-size: 16px;
+  line-height: 1;
   color: var(--primary);
   background: var(--primary-bg);
-  padding: 1px 4px;
+  padding: 1px 3px;
   border-radius: 3px;
-  margin-top: 4px;
   font-weight: 500;
+}
+
+.half-merged-badge {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.half-merged-chip {
+  font-size: 16px;
+  line-height: 1;
+  color: var(--orange, #d97706);
+  background: color-mix(in srgb, var(--orange, #d97706) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--orange, #d97706) 30%, transparent);
+  border-radius: 3px;
+  padding: 1px 3px;
+}
+
+.half-merged-chip sub {
+  font-size: 9px;
+  vertical-align: sub;
+  opacity: 0.7;
 }
 
 .btn-delete {

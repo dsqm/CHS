@@ -167,6 +167,16 @@ function onMergeSearchBlur() {
   setTimeout(closeMergeSearch, 150)
 }
 
+// 将字根规范化为分析用的标准形式：
+// 1. 归并字根 → 来源字根（elements 中已解析，需与之对齐）
+// 2. 等效字根 → 主字根（elements 中未解析，需手动对齐）
+function normalizeRootForAnalysis(root: string): string {
+  // 先通过 resolveElementForAnalysis 解析归并链和半归并（取 codeIndex=0 仅为解析 root）
+  const resolved = engine.resolveElementForAnalysis(root, 0)
+  // 再解析等效字根
+  return engine.getMainRoot(resolved.root) ?? resolved.root
+}
+
 function buildMergeSpec(): MergeSpec | null {
   const full = new Map<string, string>()
   const partial = new Map<string, string>()
@@ -176,11 +186,16 @@ function buildMergeSpec(): MergeSpec | null {
     for (let i = 1; i < group.length; i++) {
       const src = group[i]
       if (src.codeIndex === null && target.codeIndex === null) {
-        full.set(src.root, target.root)
+        full.set(normalizeRootForAnalysis(src.root), normalizeRootForAnalysis(target.root))
       } else {
         const srcIdx = src.codeIndex ?? 0
         const tgtIdx = target.codeIndex ?? 0
-        partial.set(`${src.root}.${srcIdx}`, `${target.root}.${tgtIdx}`)
+        // 部分归并：通过 resolveElementForAnalysis 解析归并链和半归并后再规范化等效字根
+        const resolvedSrc = engine.resolveElementForAnalysis(src.root, srcIdx)
+        const resolvedTgt = engine.resolveElementForAnalysis(target.root, tgtIdx)
+        const normSrc = engine.getMainRoot(resolvedSrc.root) ?? resolvedSrc.root
+        const normTgt = engine.getMainRoot(resolvedTgt.root) ?? resolvedTgt.root
+        partial.set(`${normSrc}.${resolvedSrc.codeIndex}`, `${normTgt}.${resolvedTgt.codeIndex}`)
       }
     }
   }
@@ -404,10 +419,12 @@ function computeMarginalCollisionsByElements(
     const sliced = positions.map(p => {
       const e = elems[p]
       if (!e || !e.root) return ''
-      if (!mergeSpec) return `${e.root}.${e.codeIndex}`
-      const partialKey = `${e.root}.${e.codeIndex}`
+      // 规范化等效字根 → 主字根（归并/半归并已由 resolveElementForAnalysis 处理）
+      const normRoot = engine.getMainRoot(e.root) ?? e.root
+      if (!mergeSpec) return `${normRoot}.${e.codeIndex}`
+      const partialKey = `${normRoot}.${e.codeIndex}`
       if (mergeSpec.partial.has(partialKey)) return mergeSpec.partial.get(partialKey)!
-      const fullMapped = mergeSpec.full.get(e.root)
+      const fullMapped = mergeSpec.full.get(normRoot)
       return fullMapped ? `${fullMapped}.${e.codeIndex}` : partialKey
     })
     if (sliced.every(s => !s)) continue
@@ -475,19 +492,23 @@ function runMultiDistAnalysis() {
   const posSet = new Set(positions)
   for (const [char] of cachedCodeMap.value) {
     const elems = engine.getCharCodeElements(char)
-    // 选中码位取对应字根+码位索引作为分组键
+    // 选中码位取对应字根+码位索引作为分组键（等效字根规范化为主字根）
     const sliced = positions.map(p => {
       const e = elems[p]
-      return e ? `${e.root}.${e.codeIndex}` : ''
+      if (!e) return ''
+      const normRoot = engine.getMainRoot(e.root) ?? e.root
+      return `${normRoot}.${e.codeIndex}`
     })
     const key = JSON.stringify(sliced)
     if (!elemKeyToChars.has(key)) {
       elemKeyToChars.set(key, [])
-      // 显示时：选中码位显示「字根.码位索引」，未选中码位显示 *
+      // 显示时：选中码位显示规范化后的「字根.码位索引」，未选中码位显示 *
       const display = Array.from({ length: maxLen }, (_, i) => {
         if (!posSet.has(i)) return '*'
         const e = elems[i]
-        return e ? `${e.root}.${e.codeIndex}` : ''
+        if (!e) return ''
+        const normRoot = engine.getMainRoot(e.root) ?? e.root
+        return `${normRoot}.${e.codeIndex}`
       }).join(' ')
       elemKeyToDisplay.set(key, display)
     }

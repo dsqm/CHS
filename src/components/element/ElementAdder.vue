@@ -117,6 +117,7 @@ const mergeSearchResults = computed(() => {
   for (const [root, code] of engine.rootCodes) {
     if (!code || !code.main) continue
     if (root === props.selectedElement) continue  // 排除自己
+    if (engine.mergedRoots.has(root)) continue    // 排除已归并字根
 
     if (strokeSearch) {
       // 笔画编码搜索

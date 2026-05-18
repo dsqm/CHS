@@ -3,12 +3,13 @@ import { computed, ref } from 'vue'
 import { useEngine } from '../composables/useEngine'
 import { unicodeBlock, unicodeHex } from '../engine/unicode'
 import { isBracedRoot, bracedRootToPua } from '../utils/pua'
+import { codeToString } from '../engine/config'
 import type { PinyinInfo } from '../engine/engine'
 import KeySelect from './element/KeySelect.vue'
 
 const {
   engine, selectedChar, refreshStats, toast, switchPage, setSearchChar,
-  saveCurrentConfig, setTransformerDraft
+  saveCurrentConfig, setTransformerDraft, rootsVersion
 } = useEngine()
 
 const showRootCodeDialog = ref(false)
@@ -222,19 +223,46 @@ const activeRootIds = computed(() => {
   return engine.decompose(root).ids || engine.decomp.get(root) || ''
 })
 
+function isStrokeCodeQuery(query: string): boolean {
+  return /^[1-5]+$/.test(query)
+}
+
 const mergeSearchResults = computed(() => {
+  rootsVersion.value
   const query = mergeSearchQuery.value.trim().toLowerCase()
   const currentRoot = getActiveRoot()
   if (!query || !currentRoot) return []
 
   const results: { root: string; code: string }[] = []
+  const strokeSearch = isStrokeCodeQuery(query)
+
   for (const [root, code] of engine.rootCodes) {
     if (!code?.main || root === currentRoot) continue
-    const codeStr = `${code.main || ''}${code.sub || ''}${code.supplement || ''}`
-    if (root.toLowerCase().includes(query) || codeStr.toLowerCase().includes(query)) {
-      results.push({ root, code: codeStr })
+    if (engine.mergedRoots.has(root)) continue
+
+    if (strokeSearch) {
+      const strokes = engine.getStrokes(root)
+      const strokeCode = strokes.length > 0 ? strokes[0] : ''
+      if (strokeCode.includes(query)) {
+        results.push({ root, code: codeToString(code) })
+      }
+    } else {
+      if (root.toLowerCase().includes(query) || codeToString(code).toLowerCase().includes(query)) {
+        results.push({ root, code: codeToString(code) })
+      }
     }
   }
+
+  if (strokeSearch) {
+    results.sort((a, b) => {
+      const strokesA = engine.getStrokes(a.root)
+      const strokesB = engine.getStrokes(b.root)
+      const codeA = strokesA.length > 0 ? strokesA[0] : ''
+      const codeB = strokesB.length > 0 ? strokesB[0] : ''
+      return (codeA === query ? 0 : 1) - (codeB === query ? 0 : 1)
+    })
+  }
+
   return results.slice(0, 20)
 })
 

@@ -193,6 +193,21 @@ const allRootsList = computed(() => {
   rootsVersion.value
   return [...engine.roots].sort()
 })
+
+// 半归并反向索引：源字根 → 引用它的字根列表
+const codeEquivReverseMap = computed(() => {
+  rootsVersion.value
+  const result = new Map<string, { targetRoot: string; targetIndex: number }[]>()
+  for (const [targetRef, sourceRef] of engine.codeEquivalences) {
+    const targetParsed = engine.parseCodeRef(targetRef)
+    const sourceParsed = engine.parseCodeRef(sourceRef)
+    if (!targetParsed || !sourceParsed) continue
+    const sourceRoot = sourceParsed.root
+    if (!result.has(sourceRoot)) result.set(sourceRoot, [])
+    result.get(sourceRoot)!.push({ targetRoot: targetParsed.root, targetIndex: targetParsed.codeIndex })
+  }
+  return result
+})
 </script>
 
 <template>
@@ -268,28 +283,39 @@ const allRootsList = computed(() => {
           class="root-item"
           :class="{ 'editing': editingRoot === item.root }"
         >
-          <span class="root-char">{{ item.root }}</span>
-          <input
-            v-if="editingRoot === item.root"
-            v-model="editForm.code"
-            class="code-input"
-            maxlength="10"
-            placeholder="编码"
-            @keyup.enter="saveCode"
-            @keyup.esc="closeEditModal"
-          />
-          <span v-else class="root-code" @click="openEditModal(item.root)">
-            <span class="main">{{ item.code.main.toUpperCase() }}</span>
-            <span v-if="item.code.sub" class="sub">{{ item.code.sub }}</span>
-            <span v-if="item.code.supplement" class="supplement">{{ item.code.supplement }}</span>
-          </span>
-          <div v-if="editingRoot === item.root" class="root-actions">
-            <button class="btn btn-sm" @click="saveCode">保存</button>
-            <button class="btn btn-sm btn-outline" @click="closeEditModal">取消</button>
+          <div class="root-item-main">
+            <span class="root-char">{{ item.root }}</span>
+            <input
+              v-if="editingRoot === item.root"
+              v-model="editForm.code"
+              class="code-input"
+              maxlength="10"
+              placeholder="编码"
+              @keyup.enter="saveCode"
+              @keyup.esc="closeEditModal"
+            />
+            <span v-else class="root-code" @click="openEditModal(item.root)">
+              <span class="main">{{ item.code.main.toUpperCase() }}</span>
+              <span v-if="item.code.sub" class="sub">{{ item.code.sub }}</span>
+              <span v-if="item.code.supplement" class="supplement">{{ item.code.supplement }}</span>
+            </span>
+            <div v-if="editingRoot === item.root" class="root-actions">
+              <button class="btn btn-sm" @click="saveCode">保存</button>
+              <button class="btn btn-sm btn-outline" @click="closeEditModal">取消</button>
+            </div>
+            <div v-else class="root-actions">
+              <button class="btn btn-sm btn-outline" @click="openEditModal(item.root)">编辑</button>
+              <button class="btn btn-sm btn-danger" @click="removeRoot(item.root)">删除</button>
+            </div>
           </div>
-          <div v-else class="root-actions">
-            <button class="btn btn-sm btn-outline" @click="openEditModal(item.root)">编辑</button>
-            <button class="btn btn-sm btn-danger" @click="removeRoot(item.root)">删除</button>
+          <div v-if="codeEquivReverseMap.get(item.root)?.length" class="half-merged-row">
+            <span class="half-merged-label">半归并</span>
+            <span
+              v-for="equiv in codeEquivReverseMap.get(item.root)"
+              :key="`${equiv.targetRoot}.${equiv.targetIndex}`"
+              class="half-merged-chip"
+              :title="`${equiv.targetRoot} 的第 ${equiv.targetIndex + 1} 码引用此字根`"
+            >{{ equiv.targetRoot }}<span class="equiv-pos">·{{ equiv.targetIndex + 1 }}</span></span>
           </div>
         </div>
       </div>
@@ -477,8 +503,8 @@ const allRootsList = computed(() => {
 
 .root-item {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -489,6 +515,12 @@ const allRootsList = computed(() => {
 .root-item.editing {
   border-color: var(--primary);
   background: var(--bg2);
+}
+
+.root-item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .root-char {
@@ -530,6 +562,42 @@ const allRootsList = computed(() => {
 .root-actions {
   display: flex;
   gap: 4px;
+}
+
+/* 半归并信息行 */
+.half-merged-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+}
+
+.half-merged-label {
+  font-size: 10px;
+  color: var(--text2);
+  font-weight: 500;
+  white-space: nowrap;
+  margin-right: 2px;
+}
+
+.half-merged-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  font-size: 13px;
+  color: var(--orange, #d97706);
+  background: color-mix(in srgb, var(--orange, #d97706) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--orange, #d97706) 30%, transparent);
+  border-radius: 4px;
+  padding: 1px 6px;
+  line-height: 1.4;
+}
+
+.equiv-pos {
+  font-size: 10px;
+  opacity: 0.7;
 }
 
 /* 面板头部操作区 */
