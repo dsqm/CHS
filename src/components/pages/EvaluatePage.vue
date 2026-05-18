@@ -1485,7 +1485,7 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
         <button class="btn btn-primary" :disabled="isEvaluating" @click="runEvaluation">
           {{ isEvaluating ? '测评中...' : '开始测评' }}
         </button>
-        <ExportEvaluateImage />
+        <ExportEvaluateImage :switch-tab="(tab) => subTab = tab" />
         <span class="hint">测评当前编码方案的单字和词组性能指标</span>
       </div>
 
@@ -1709,7 +1709,7 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
         </div>
 
         <!-- 词组测评表格 -->
-        <div v-if="subTab === 'word' && wordEvaluationResult" class="table-container">
+        <div v-if="subTab === 'word' && wordEvaluationResult" class="table-container word-eval-table-wrapper">
           <table class="eval-table word-eval-table">
             <thead>
               <tr class="scheme-title-row">
@@ -1822,12 +1822,12 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
         </div>
 
         <!-- 词组编码候选数 Top 10 -->
-        <div v-if="subTab === 'word' && wordEvaluationResult && candidatesResult" class="heatmap-container">
+        <div v-if="subTab === 'word' && wordEvaluationResult && candidatesResult" class="heatmap-container word-candidates-chart">
           <CodeCandidatesChart :data="candidatesResult.word" :export-filename="`${currentSchemeName}-词组重码.tsv`" />
         </div>
 
         <!-- 词组键位热力图 -->
-        <div v-if="subTab === 'word' && wordEvaluationResult" class="heatmap-container">
+        <div v-if="subTab === 'word' && wordEvaluationResult" class="heatmap-container word-heatmap-wrapper">
           <div class="heatmap-header">
             <h3 class="section-title">键位热力图（单位：%）</h3>
             <label class="checkbox-label">
@@ -1839,7 +1839,7 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
         </div>
 
         <!-- 字词混合测评表格 -->
-        <div v-if="subTab === 'mixed' && mixedEvaluationResult" class="table-container">
+        <div v-if="subTab === 'mixed' && mixedEvaluationResult" class="table-container mixed-eval-table-wrapper">
           <table class="eval-table word-eval-table">
             <thead>
               <tr class="scheme-title-row">
@@ -1940,12 +1940,12 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
         </div>
 
         <!-- 字词混合编码候选数 Top 10 -->
-        <div v-if="subTab === 'mixed' && mixedEvaluationResult && candidatesResult" class="heatmap-container">
+        <div v-if="subTab === 'mixed' && mixedEvaluationResult && candidatesResult" class="heatmap-container mixed-candidates-chart">
           <CodeCandidatesChart :data="candidatesResult.mixed" :export-filename="`${currentSchemeName}-字词混合重码.tsv`" />
         </div>
 
         <!-- 字词混合键位热力图 -->
-        <div v-if="subTab === 'mixed' && mixedEvaluationResult" class="heatmap-container">
+        <div v-if="subTab === 'mixed' && mixedEvaluationResult" class="heatmap-container mixed-heatmap-wrapper">
           <div class="heatmap-header">
             <h3 class="section-title">键位热力图（单位：%）</h3>
             <label class="checkbox-label">
@@ -2014,7 +2014,7 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
           <button v-if="uploadedCodeMap" class="btn btn-secondary" @click="clearUploaded">
             清除码表
           </button>
-          <ExportEvaluateImage mode="upload" />
+          <ExportEvaluateImage mode="upload" :switch-tab="(tab) => subTab = tab" />
         </div>
       </div>
 
@@ -2235,7 +2235,7 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
         </div>
 
         <!-- 词组测评表格 -->
-        <div v-if="subTab === 'word' && uploadedWordResult" class="table-container">
+        <div v-if="subTab === 'word' && uploadedWordResult" class="table-container uploaded-word-eval-table-wrapper">
           <table class="eval-table word-eval-table">
             <thead>
               <tr class="scheme-title-row">
@@ -2344,12 +2344,12 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
         </div>
 
         <!-- 词组编码候选数 Top 10 -->
-        <div v-if="subTab === 'word' && uploadedWordResult && uploadedCandidatesResult" class="heatmap-container">
+        <div v-if="subTab === 'word' && uploadedWordResult && uploadedCandidatesResult" class="heatmap-container uploaded-word-candidates-chart">
           <CodeCandidatesChart :data="uploadedCandidatesResult.word" :export-filename="`${uploadedSchemeName}-词组重码.tsv`" />
         </div>
 
         <!-- 词组键位热力图 -->
-        <div v-if="subTab === 'word' && uploadedWordResult" class="heatmap-container">
+        <div v-if="subTab === 'word' && uploadedWordResult" class="heatmap-container uploaded-word-heatmap-wrapper">
           <div class="heatmap-header">
             <h3 class="section-title">键位热力图（单位：%）</h3>
             <label class="checkbox-label">
@@ -2361,7 +2361,7 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
         </div>
 
         <!-- 字词混合测评表格 -->
-        <div v-if="subTab === 'mixed' && uploadedMixedResult" class="table-container">
+        <div v-if="subTab === 'mixed' && uploadedMixedResult" class="table-container uploaded-mixed-eval-table-wrapper">
           <table class="eval-table word-eval-table">
             <thead>
               <tr class="scheme-title-row">
@@ -2462,12 +2462,12 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
         </div>
 
         <!-- 字词混合编码候选数 Top 10 -->
-        <div v-if="subTab === 'mixed' && uploadedMixedResult && uploadedCandidatesResult" class="heatmap-container">
+        <div v-if="subTab === 'mixed' && uploadedMixedResult && uploadedCandidatesResult" class="heatmap-container uploaded-mixed-candidates-chart">
           <CodeCandidatesChart :data="uploadedCandidatesResult.mixed" :export-filename="`${uploadedSchemeName}-字词混合重码.tsv`" />
         </div>
 
         <!-- 字词混合键位热力图 -->
-        <div v-if="subTab === 'mixed' && uploadedMixedResult" class="heatmap-container">
+        <div v-if="subTab === 'mixed' && uploadedMixedResult" class="heatmap-container uploaded-mixed-heatmap-wrapper">
           <div class="heatmap-header">
             <h3 class="section-title">键位热力图（单位：%）</h3>
             <label class="checkbox-label">

@@ -1,16 +1,64 @@
 <script setup lang="ts">
+import { ref, nextTick } from 'vue'
 import { useEngine } from '../../composables/useEngine'
 import html2canvas from 'html2canvas'
 
-const props = withDefaults(defineProps<{ mode?: 'single' | 'upload' }>(), { mode: 'single' })
+const props = withDefaults(defineProps<{
+  mode?: 'single' | 'upload'
+  switchTab?: (tab: 'char' | 'word' | 'mixed') => void
+}>(), { mode: 'single' })
 
 const { engine, toast } = useEngine()
+
+const showModal = ref(false)
+
+type ModuleKey =
+  | 'charData' | 'charCandidates' | 'charHeatmap'
+  | 'wordData' | 'wordCandidates' | 'wordHeatmap'
+  | 'mixedData' | 'mixedCandidates' | 'mixedHeatmap'
+
+interface ModuleConfig {
+  key: ModuleKey
+  label: string
+  tab: 'char' | 'word' | 'mixed'
+  singleSelector: string
+  uploadSelector: string
+}
+
+const MODULES: ModuleConfig[] = [
+  { key: 'charData',        label: '单字测评数据',   tab: 'char',  singleSelector: '.evaluate-main-content',          uploadSelector: '.uploaded-main-content' },
+  { key: 'charCandidates',  label: '单字测评多候选', tab: 'char',  singleSelector: '.code-candidates-chart',           uploadSelector: '.uploaded-candidates-chart' },
+  { key: 'charHeatmap',     label: '单字测评键位',   tab: 'char',  singleSelector: '.heatmap-wrapper',                 uploadSelector: '.uploaded-heatmap-wrapper' },
+  { key: 'wordData',        label: '词组测评数据',   tab: 'word',  singleSelector: '.word-eval-table-wrapper',         uploadSelector: '.uploaded-word-eval-table-wrapper' },
+  { key: 'wordCandidates',  label: '词组测评多候选', tab: 'word',  singleSelector: '.word-candidates-chart',           uploadSelector: '.uploaded-word-candidates-chart' },
+  { key: 'wordHeatmap',     label: '词组测评键位',   tab: 'word',  singleSelector: '.word-heatmap-wrapper',            uploadSelector: '.uploaded-word-heatmap-wrapper' },
+  { key: 'mixedData',       label: '字词测评数据',   tab: 'mixed', singleSelector: '.mixed-eval-table-wrapper',        uploadSelector: '.uploaded-mixed-eval-table-wrapper' },
+  { key: 'mixedCandidates', label: '字词测评多候选', tab: 'mixed', singleSelector: '.mixed-candidates-chart',          uploadSelector: '.uploaded-mixed-candidates-chart' },
+  { key: 'mixedHeatmap',    label: '字词测评键位',   tab: 'mixed', singleSelector: '.mixed-heatmap-wrapper',           uploadSelector: '.uploaded-mixed-heatmap-wrapper' },
+]
+
+const selected = ref<Set<ModuleKey>>(new Set(['charData', 'charCandidates', 'charHeatmap']))
+
+function toggleModule(key: ModuleKey) {
+  if (selected.value.has(key)) {
+    selected.value.delete(key)
+  } else {
+    selected.value.add(key)
+  }
+}
+
+function selectAll() {
+  selected.value = new Set(MODULES.map(m => m.key))
+}
+
+function selectNone() {
+  selected.value = new Set()
+}
 
 async function captureElement(selector: string): Promise<HTMLCanvasElement | null> {
   const el = document.querySelector(selector) as HTMLElement | null
   if (!el) return null
 
-  // 临时去掉 overflow 限制，让表格完整渲染
   const originalOverflow = el.style.overflow
   const originalOverflowX = el.style.overflowX
   el.style.overflow = 'visible'
@@ -21,7 +69,6 @@ async function captureElement(selector: string): Promise<HTMLCanvasElement | nul
     useCORS: true,
     logging: false,
     backgroundColor: null,
-    // 使用元素的完整 scrollWidth/scrollHeight
     width: el.scrollWidth,
     height: el.scrollHeight,
     windowWidth: el.scrollWidth + 200,
@@ -32,30 +79,50 @@ async function captureElement(selector: string): Promise<HTMLCanvasElement | nul
   return canvas
 }
 
-async function exportEvaluateImage() {
+const isExporting = ref(false)
+
+async function exportImage() {
+  if (selected.value.size === 0) {
+    toast('请至少勾选一个模块')
+    return
+  }
+
+  isExporting.value = true
   const config = engine.getConfig()
   const schemeName = config.meta.name || '未命名'
   const authorName = config.meta.author || '未知作者'
   const timestamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '')
-
   const isUpload = props.mode === 'upload'
-  const tableSelector = isUpload ? '.uploaded-main-content' : '.evaluate-main-content'
-  const chartSelector = isUpload ? '.uploaded-candidates-chart' : '.code-candidates-chart'
-  const heatmapSelector = isUpload ? '.uploaded-heatmap-wrapper' : '.heatmap-wrapper'
 
   try {
-    const [tableCanvas, chartCanvas, heatmapCanvas] = await Promise.all([
-      captureElement(tableSelector),
-      captureElement(chartSelector),
-      captureElement(heatmapSelector),
-    ])
+    const orderedModules = MODULES.filter(m => selected.value.has(m.key))
 
-    if (!tableCanvas && !chartCanvas && !heatmapCanvas) {
-      toast('未找到测评内容，请先运行测评', 'error')
-      return
+    // 按 tab 分组，依次切换子标签截图，避免 v-if 导致 DOM 不存在
+    const canvasMap = new Map<ModuleKey, HTMLCanvasElement>()
+    const tabs: Array<'char' | 'word' | 'mixed'> = ['char', 'word', 'mixed']
+    for (const tab of tabs) {
+      const tabModules = orderedModules.filter(m => m.tab === tab)
+      if (tabModules.length === 0) continue
+      if (props.switchTab) {
+        props.switchTab(tab)
+        await nextTick()
+        // 等待 DOM 渲染稳定
+        await new Promise(r => setTimeout(r, 80))
+      }
+      for (const m of tabModules) {
+        const selector = isUpload ? m.uploadSelector : m.singleSelector
+        const canvas = await captureElement(selector)
+        if (canvas) canvasMap.set(m.key, canvas)
+      }
     }
 
-    const canvases = [tableCanvas, chartCanvas, heatmapCanvas].filter(Boolean) as HTMLCanvasElement[]
+    const canvases = orderedModules.map(m => canvasMap.get(m.key)).filter(Boolean) as HTMLCanvasElement[]
+
+    if (canvases.length === 0) {
+      toast('未找到所选模块内容，请先运行测评')
+      isExporting.value = false
+      return
+    }
 
     const scale = 2
     const headerHeight = 48
@@ -64,8 +131,9 @@ async function exportEvaluateImage() {
     const padding = 24
 
     const maxWidth = Math.max(...canvases.map(c => c.width))
-    const totalHeight = (headerHeight + footerHeight + padding * 2) * scale
-      + canvases.reduce((sum, c) => sum + c.height + gap * scale, 0)
+    const totalHeight =
+      (headerHeight + footerHeight + padding * 2) * scale +
+      canvases.reduce((sum, c) => sum + c.height + gap * scale, 0)
 
     const merged = document.createElement('canvas')
     merged.width = maxWidth + padding * 2 * scale
@@ -99,22 +167,193 @@ async function exportEvaluateImage() {
     link.click()
 
     toast('测评截图已保存')
+    showModal.value = false
   } catch (error) {
     console.error('导出测评截图失败:', error)
-    toast('导出测评截图失败，请重试', 'error')
+    toast('导出测评截图失败，请重试')
+  } finally {
+    isExporting.value = false
   }
 }
 </script>
 
 <template>
-  <button class="btn btn-sm btn-outline" @click="exportEvaluateImage">
+  <button class="btn btn-sm btn-outline" @click="showModal = true">
     📷 截图分享
   </button>
+
+  <Teleport to="body">
+    <div v-if="showModal" class="export-modal-overlay" @click.self="showModal = false">
+      <div class="export-modal">
+        <div class="export-modal-header">
+          <span class="export-modal-title">选择截图模块</span>
+          <button class="export-modal-close" @click="showModal = false">✕</button>
+        </div>
+
+        <div class="export-modal-body">
+          <div class="module-grid">
+            <label
+              v-for="m in MODULES"
+              :key="m.key"
+              class="module-item"
+              :class="{ selected: selected.has(m.key) }"
+            >
+              <input
+                type="checkbox"
+                :checked="selected.has(m.key)"
+                @change="toggleModule(m.key)"
+              />
+              <span>{{ m.label }}</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="export-modal-footer">
+          <div class="footer-left">
+            <button class="btn btn-sm btn-ghost" @click="selectAll">全选</button>
+            <button class="btn btn-sm btn-ghost" @click="selectNone">清空</button>
+          </div>
+          <div class="footer-right">
+            <span class="selected-count">已选 {{ selected.size }} 个模块</span>
+            <button class="btn btn-sm btn-primary" :disabled="isExporting || selected.size === 0" @click="exportImage">
+              {{ isExporting ? '生成中...' : '导出图片' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
 .btn-sm {
   padding: 6px 12px;
   font-size: 13px;
+}
+
+.export-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.export-modal {
+  background: var(--bg2, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+}
+
+.export-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+
+.export-modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text1, #111827);
+}
+
+.export-modal-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text3, #9ca3af);
+  font-size: 16px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.export-modal-close:hover {
+  background: var(--bg3, #f3f4f6);
+  color: var(--text1, #111827);
+}
+
+.export-modal-body {
+  padding: 14px 18px;
+}
+
+.module-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.module-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text2, #374151);
+  transition: background 0.15s, border-color 0.15s;
+  user-select: none;
+}
+
+.module-item:hover {
+  background: var(--bg3, #f3f4f6);
+}
+
+.module-item.selected {
+  background: var(--accent-light, #eff6ff);
+  border-color: var(--accent, #3b82f6);
+  color: var(--accent, #3b82f6);
+}
+
+.module-item input[type="checkbox"] {
+  accent-color: var(--accent, #3b82f6);
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.export-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 18px 14px;
+  border-top: 1px solid var(--border, #e5e7eb);
+  gap: 8px;
+}
+
+.footer-left {
+  display: flex;
+  gap: 6px;
+}
+
+.footer-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.selected-count {
+  font-size: 12px;
+  color: var(--text3, #9ca3af);
+}
+
+.btn-ghost {
+  background: none;
+  border: 1px solid var(--border, #e5e7eb);
+  color: var(--text2, #374151);
+}
+
+.btn-ghost:hover {
+  background: var(--bg3, #f3f4f6);
 }
 </style>
