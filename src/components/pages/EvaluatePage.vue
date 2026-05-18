@@ -4,6 +4,7 @@ import { useEngine } from '../../composables/useEngine'
 import KeyboardHeatmap from '../shared/KeyboardHeatmap.vue'
 import CodeCandidatesChart from '../shared/CodeCandidatesChart.vue'
 import Icon from '../Icon.vue'
+import ExportEvaluateImage from '../element/ExportEvaluateImage.vue'
 import { calcKeySoulEquivalence, debugKeySoulEquivalence, type SequenceDebugResult } from '../../utils/keySoulEquiv'
 import {
   evaluateScheme,
@@ -1484,6 +1485,7 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
         <button class="btn btn-primary" :disabled="isEvaluating" @click="runEvaluation">
           {{ isEvaluating ? '测评中...' : '开始测评' }}
         </button>
+        <ExportEvaluateImage />
         <span class="hint">测评当前编码方案的单字和词组性能指标</span>
       </div>
 
@@ -1503,7 +1505,7 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
         </div>
 
         <!-- 单字测评表格 -->
-        <div v-if="subTab === 'char' && evaluationResult" class="table-container">
+        <div v-if="subTab === 'char' && evaluationResult" class="evaluate-main-content table-container">
           <table class="eval-table">
             <thead>
               <tr class="scheme-title-row">
@@ -1690,12 +1692,12 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
         </div>
 
         <!-- 单字编码候选数 Top 10 -->
-        <div v-if="subTab === 'char' && evaluationResult && candidatesResult" class="heatmap-container">
+        <div v-if="subTab === 'char' && evaluationResult && candidatesResult" class="heatmap-container code-candidates-chart">
           <CodeCandidatesChart :data="candidatesResult.char" :export-filename="`${currentSchemeName}-单字重码.tsv`" />
         </div>
 
         <!-- 键位热力图 -->
-        <div v-if="subTab === 'char' && evaluationResult" class="heatmap-container">
+        <div v-if="subTab === 'char' && evaluationResult" class="heatmap-container heatmap-wrapper">
           <div class="heatmap-header">
             <h3 class="section-title">键位热力图（单位：%）</h3>
             <label class="checkbox-label">
@@ -2012,6 +2014,7 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
           <button v-if="uploadedCodeMap" class="btn btn-secondary" @click="clearUploaded">
             清除码表
           </button>
+          <ExportEvaluateImage mode="upload" />
         </div>
       </div>
 
@@ -2030,7 +2033,7 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
           </button>
         </div>
         <!-- 单字测评表格 -->
-        <div v-if="subTab === 'char' && uploadedResult" class="table-container">
+        <div v-if="subTab === 'char' && uploadedResult" class="uploaded-main-content table-container">
           <table class="eval-table">
             <thead>
               <tr class="scheme-title-row">
@@ -2215,12 +2218,12 @@ watch([rootsVersion, configVersion, charsetVersion], () => {
         </div>
 
         <!-- 单字编码候选数 Top 10 -->
-        <div v-if="subTab === 'char' && uploadedResult && uploadedCandidatesResult" class="heatmap-container">
+        <div v-if="subTab === 'char' && uploadedResult && uploadedCandidatesResult" class="heatmap-container uploaded-candidates-chart">
           <CodeCandidatesChart :data="uploadedCandidatesResult.char" :export-filename="`${uploadedSchemeName}-单字重码.tsv`" />
         </div>
 
         <!-- 单字键位热力图 -->
-        <div v-if="subTab === 'char' && uploadedResult" class="heatmap-container">
+        <div v-if="subTab === 'char' && uploadedResult" class="heatmap-container uploaded-heatmap-wrapper">
           <div class="heatmap-header">
             <h3 class="section-title">键位使用分布（单位：%）</h3>
             <label class="checkbox-label">
