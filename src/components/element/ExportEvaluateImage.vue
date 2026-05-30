@@ -87,6 +87,31 @@ function stripInsetShadow(doc: Document) {
   })
 }
 
+// html2canvas 1.4.1 在克隆文档里重新解析样式时，对 `color: var(--primary)` 这类
+// 依赖 CSS 自定义属性的颜色解析不稳定，导致测评表里本应是蓝色（var(--primary)）的
+// 可点击列被渲染成了粉红色。这里在截图前，把实时 DOM 计算出的 color 以行内样式
+// （优先级高于样式表规则，html2canvas 会直接读取）写回到每个元素上，截图结束后再
+// 还原。因为写入的就是元素当前实际显示的颜色，页面本身不会有任何视觉变化。
+function freezeComputedColors(root: HTMLElement): () => void {
+  const restorers: Array<() => void> = []
+  const elements = [root, ...Array.from(root.querySelectorAll<HTMLElement>('*'))]
+  elements.forEach((el) => {
+    const color = window.getComputedStyle(el).color
+    if (!color) return
+    // 记录原始行内 color 的值与优先级，截图后精确还原
+    const prevValue = el.style.getPropertyValue('color')
+    const prevPriority = el.style.getPropertyPriority('color')
+    restorers.push(() => {
+      el.style.removeProperty('color')
+      if (prevValue) el.style.setProperty('color', prevValue, prevPriority)
+    })
+    // 用 important 盖过样式表里带 !important 的规则（如重码列的红色）。
+    // 写入的就是元素当前计算色，视觉上与还原前完全一致。
+    el.style.setProperty('color', color, 'important')
+  })
+  return () => restorers.forEach((fn) => fn())
+}
+
 async function captureElement(selector: string): Promise<HTMLCanvasElement | null> {
   const el = document.querySelector(selector) as HTMLElement | null
   if (!el) return null
@@ -96,19 +121,25 @@ async function captureElement(selector: string): Promise<HTMLCanvasElement | nul
   el.style.overflow = 'visible'
   el.style.overflowX = 'visible'
 
-  const canvas = await html2canvas(el, {
-    scale: 2,
-    useCORS: true,
-    logging: false,
-    backgroundColor: null,
-    width: el.scrollWidth,
-    height: el.scrollHeight,
-    windowWidth: el.scrollWidth + 200,
-    onclone: (clonedDoc) => stripInsetShadow(clonedDoc),
-  })
+  const restoreColors = freezeComputedColors(el)
 
-  el.style.overflow = originalOverflow
-  el.style.overflowX = originalOverflowX
+  let canvas: HTMLCanvasElement
+  try {
+    canvas = await html2canvas(el, {
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      backgroundColor: null,
+      width: el.scrollWidth,
+      height: el.scrollHeight,
+      windowWidth: el.scrollWidth + 200,
+      onclone: (clonedDoc) => stripInsetShadow(clonedDoc),
+    })
+  } finally {
+    restoreColors()
+    el.style.overflow = originalOverflow
+    el.style.overflowX = originalOverflowX
+  }
   return canvas
 }
 
