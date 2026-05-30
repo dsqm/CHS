@@ -55,6 +55,38 @@ function selectNone() {
   selected.value = new Set()
 }
 
+// html2canvas 1.4.1 在渲染 inset box-shadow 时会画成一个忽略 border-radius 的矩形，
+// 导致 border-radius: 999px 的胶囊（如手指占比、键位百分比等）在截图里底部出现
+// 直角斜切的色块。这里在克隆文档中剥离所有 box-shadow 的 inset 分量（保留外阴影），
+// 让胶囊渲染成与网页一致的干净药丸形状。
+function stripInsetShadow(doc: Document) {
+  const view = doc.defaultView
+  if (!view) return
+  doc.querySelectorAll<HTMLElement>('*').forEach((el) => {
+    const boxShadow = view.getComputedStyle(el).boxShadow
+    if (!boxShadow || boxShadow === 'none' || !boxShadow.includes('inset')) return
+
+    // 按顶层逗号拆分多段阴影（避免拆到 rgba(...) 内部的逗号）
+    const parts: string[] = []
+    let depth = 0
+    let current = ''
+    for (const ch of boxShadow) {
+      if (ch === '(') depth++
+      else if (ch === ')') depth--
+      if (ch === ',' && depth === 0) {
+        parts.push(current)
+        current = ''
+      } else {
+        current += ch
+      }
+    }
+    if (current.trim()) parts.push(current)
+
+    const kept = parts.filter((p) => !p.includes('inset'))
+    el.style.boxShadow = kept.length ? kept.join(',') : 'none'
+  })
+}
+
 async function captureElement(selector: string): Promise<HTMLCanvasElement | null> {
   const el = document.querySelector(selector) as HTMLElement | null
   if (!el) return null
@@ -72,6 +104,7 @@ async function captureElement(selector: string): Promise<HTMLCanvasElement | nul
     width: el.scrollWidth,
     height: el.scrollHeight,
     windowWidth: el.scrollWidth + 200,
+    onclone: (clonedDoc) => stripInsetShadow(clonedDoc),
   })
 
   el.style.overflow = originalOverflow
